@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlmodel import Session, select
 from typing import List, Optional
@@ -7,6 +7,7 @@ from app.environments.models.environment import Environment
 from app.variables.models.variable import Variable
 from app.users.models.user import User
 from sqlmodel import SQLModel
+from sqlalchemy import func
 
 router = APIRouter()
 class VariableCreate(SQLModel):
@@ -47,21 +48,53 @@ def create_variable_for_environment(
     
     return variable
 
-@router.get("/", response_model=List[Variable], summary="List Variables for an Environment")
+class PaginatedVariableResponse(SQLModel):
+    count: int
+    next: Optional[str]
+    previous: Optional[str]
+    results: List[Variable]
+
+@router.get("/", response_model=PaginatedVariableResponse, summary="List Variables for an Environment") 
 def list_variables_for_environment(
     env_name: str = Path(..., description="Name of the environment"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Number of variables per page"),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    Obtiene todas las variables para un entorno específico.
+    Obtiene todas las variables para un entorno específico con paginación.
     """
     environment = session.exec(select(Environment).where(Environment.name == env_name)).first()
     if not environment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Environment not found")
+
+    offset = (page - 1) * page_size
     
-    # Devuelve solo las variables asociadas a ese entorno
-    return environment.variables
+    # Contar el total de variables solo para este entorno
+    total_count = session.exec(
+        select(func.count(Variable.id)).where(Variable.environment_id == environment.id)
+    ).one()
+
+    # Obtener las variables paginadas para este entorno
+    variables = session.exec(
+        select(Variable)
+        .where(Variable.environment_id == environment.id)
+        .order_by(Variable.id)
+        .offset(offset)
+        .limit(page_size)
+    ).all()
+
+    base_url = f"/environments/{env_name}/variables/"
+    next_url = f"{base_url}?page={page + 1}&page_size={page_size}" if (page * page_size) < total_count else None
+    previous_url = f"{base_url}?page={page - 1}&page_size={page_size}" if page > 1 else None
+
+    return PaginatedVariableResponse(
+        count=total_count,
+        next=next_url,
+        previous=previous_url,
+        results=variables,
+    )
 
 @router.get("/{var_name}", response_model=Variable, summary="Get a Specific Variable")
 def get_variable(
