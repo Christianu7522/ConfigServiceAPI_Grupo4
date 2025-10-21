@@ -9,11 +9,16 @@ from app.users.models.user import User
 from sqlmodel import SQLModel
 
 router = APIRouter()
+class VariableCreate(SQLModel):
+    name: str
+    value: str
+    description: Optional[str] = None
+    is_sensitive: bool = False
 
 # Listar variables de un entorno
 @router.post("/", response_model=Variable, summary="Create a Variable in an Environment", status_code=status.HTTP_201_CREATED)
 def create_variable_for_environment(
-    variable: Variable,
+    payload: VariableCreate,
     env_name: str = Path(..., description="Name of the environment"), 
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user)
@@ -28,11 +33,11 @@ def create_variable_for_environment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Environment not found")
 
     # Verifica que no exista ya una variable con ese nombre en este entorno
-    var_statement = select(Variable).where(Variable.name == variable.name, Variable.environment_id == environment.id)
+    var_statement = select(Variable).where(Variable.name == payload.name, Variable.environment_id == environment.id)
     existing_variable = session.exec(var_statement).first()
     if existing_variable:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Variable '{variable.name}' already exists in this environment.")
-
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Variable '{payload.name}' already exists in this environment.")
+    variable = Variable.model_validate(payload)
     # Asocia la variable con el ID del entorno encontrado
     variable.environment_id = environment.id
     
